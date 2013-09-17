@@ -1,0 +1,105 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions for the user status module.
+ */
+
+/**
+ * Implements hook_install().
+ * 
+ * Add records to the created tables
+ *
+ */
+function help_popup_install() {
+/*
+  // Adding several entries for the status
+  // Add a default entry.
+  $fields = array(
+    'name'    => 'in office',
+  );
+  
+  db_insert('user_status')
+    ->fields($fields)
+    ->execute();
+
+  // Add another entry.
+  $fields = array(
+    'name'    => 'in meeting',
+  );
+  
+  db_insert('user_status')
+    ->fields($fields)
+    ->execute();
+  
+  $fields = array(
+    'name'    => 'busy',
+  );
+  
+  db_insert('user_status')
+    ->fields($fields)
+    ->execute();
+*/
+}
+
+/**
+ * Implements hook_uninstall().
+ * 
+ * @see hook_uninstall()
+ * 
+ */
+function help_popup_uninstall() {
+  // nothing.
+}
+
+
+/**
+ * Implements hook_schema().
+ *
+ * Defines the database tables used by this module.
+ *
+ * @see hook_schema()
+ */
+function help_popup_schema() {
+  $schema['help_popup'] = array (
+    'description' => 'Record the help text for each field',
+    'fields' => array(
+      'bundle' => array(
+          'type' => 'varchar',
+          'length' => 255,
+          'not null' => TRUE,
+          'default' => '',
+      ),
+      'entity_type' => array(
+          'type' => 'varchar',
+          'length' => 255,
+          'not null' => TRUE,
+          'default' => '',
+      ),	  
+      'field_name' => array(
+          'type' => 'varchar',
+          'length' => 255,
+          'not null' => TRUE,
+          'default' => '',
+      ),
+      'help_popup_value' => array(
+          'type' => 'text',
+          'not null' => TRUE,
+      ),
+      'format' => array(
+          'type' => 'varchar',
+          'length' => 255,
+          'not null' => TRUE,
+          'default' => '',
+      ),	  	  
+    ),
+      'primary key' => array('bundle','entity_type','field_name'),
+      'indexes' => array(
+        'help_popup_idx_bundle'      => array('bundle'),
+        'help_popup_idx_entity_type' => array('entity_type'),
+        'help_popup_idx_field_name' => array('field_name'),
+    ),	  
+  );  
+  
+  return $schema;
+
+}

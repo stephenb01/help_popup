@@ -1,0 +1,4 @@
+name = Help Popup
+description = Stephen Blinkhorne - Provides popup help on the forms
+package = Help
+core = 7.x

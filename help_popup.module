@@ -1,0 +1,297 @@
+<?PHP
+
+
+/**
+ * @file
+ * This holds the specific functions for slfilm website.
+ */
+
+
+function help_popup_menu() {
+  $items = array();
+  
+  $items['help_popup/get_details'] = array(
+    'page callback' => 'help_popup_details_ajax',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  
+  return $items;
+}
+ 
+
+function help_popup_details_ajax () {
+  $data = array();
+  
+  // Retrieve the slider value
+  $field_name = $_POST['field_name'];
+  $bundle = $_POST['bundle']; 
+  $entity_type = $_POST['entity_type'];
+
+  $items = _help_popup_load($bundle,$entity_type,$field_name);
+  if (!empty($items[0]->help_popup_value))
+    $data[0]['help_popup_value'] = $items[0]->help_popup_value;
+
+  drupal_json_output($data);
+}
+/**
+ * Implements of hook_form_FORM_ID_alter().
+ */
+function help_popup_form_field_ui_field_edit_form_alter(&$form, &$form_state, $form_id) {
+  // Injects the Field Permissions settings on the Edit field tab.
+//  form_load_include($form_state, 'inc', 'field_permissions', 'field_permissions.admin');
+//  return _field_permissions_field_settings_form_alter($form, $form_state, $form_id);
+
+  $form['field']['field_help'] = array(
+    '#weight' => -10,
+    '#access' => user_access('administer field permissions'),
+  );
+
+  $bundle = $form['#instance']['bundle'];
+  $entity_type = $form['#instance']['entity_type'];
+  $field_name = $form['#instance']['field_name'];
+  $default = '';
+  $format = NULL;
+  $default_value = _help_popup_load($bundle,$entity_type,$field_name);
+  if (!empty($default_value)) {
+
+    $default = $default_value[0]->help_popup_value;
+    $format = $default_value[0]->format;
+  }
+
+  $form['field']['field_help']['type'] = array(
+    '#title' => t('Help popup text'),
+    '#description' => 'Add your HTML text here to display in the pop up next to this field.',
+    '#type' => 'text_format',
+    '#format' => $format,
+    '#default_value' => $default,
+  );
+  
+  $form['#submit'][] = '_help_popup_field_settings_form_submit';
+}
+
+/*
+ * Save the help text to the database
+ */
+function _help_popup_field_settings_form_submit($form,$form_state) {
+  // If the help text box is empty them we need to make sure the text is
+  // removed from the database.
+  $bundle = $form_state['values']['instance']['bundle'];
+  $entity_type = $form_state['values']['instance']['entity_type'];
+  $field_name = $form_state['values']['instance']['field_name'];
+  $value = $form_state['values']['field']['field_help']['type']['value'];
+
+  $format = $form_state['values']['field']['field_help']['type']['format'];
+  _help_popup_save($field_name,$entity_type,$bundle,$value,$format);
+
+}
+
+/*
+ * This function will save the help information in the database.
+ * If the value given is empty, then it will remove the item from the table.
+ */
+function _help_popup_save($field_name,$entity_type,$bundle,$value, $format) {
+  // When we save we are either inserting a new value or overwriting
+  // an existing value. However, if the value is empty and the help exists
+  // in the DB then we need to remove it from the database
+  if (_help_popup_item_exists($bundle,$entity_type,$field_name)) {
+    // Help item exists in the DB. So now check the value and if it is empty
+    // then we need to delete it from the DB
+    if (empty($value)) {
+      // Need to remove the item from the DB
+      $query = db_delete('help_popup');
+      $query->condition('bundle',$bundle,'=');
+      $query->condition('entity_type',$entity_type,'=');
+      $query->condition('field_name',$field_name,'=');
+      try {
+        $query->execute();
+      } catch (Exception $e) {
+        drupal_set_message(t('An error occurred removing a help item. Check the log files for more information'),'error');
+        watchdog('help_popup','Error removing item : ' . $e,NULL,WATCHDOG_ERROR);
+      }
+    } else {
+      // Update the database
+      $query = db_update('help_popup');
+      $query->fields(
+          array(
+            'help_popup_value' => $value,
+            'format' => $format,
+          )
+        );
+      $query->condition('bundle',$bundle,'=');
+      $query->condition('entity_type',$entity_type,'=');
+      $query->condition('field_name',$field_name,'=');
+      try {
+        $query->execute();
+      } catch (Exception $e) {
+        drupal_set_message(t('An error occurred updating a help item. Check the log files for more information'),'error');
+        watchdog('help_popup','Error updating item : ' . $e,NULL,WATCHDOG_ERROR);      
+      }
+    }
+  } else {
+    // Help item doesn't exist so we need to add it. But we only add it if the 
+    // value is not empty, otherwise we just leave it.
+    if (!empty($value)) {
+      // we have something to insert into the database.
+      $query = db_insert('help_popup');
+      $query->fields(
+        array (
+          'bundle' => $bundle,
+          'entity_type' => $entity_type,
+          'field_name' => $field_name,
+          'help_popup_value' => $value,
+          'format' => $format,
+        )
+      );
+      try {
+        $query->execute();
+      } catch (Exception $e) {
+        drupal_set_message(t('An error occurred inserting a help item. Check the log files for more information'),'error');
+        watchdog('help_popup','Error inserting item : ' . $e,NULL,WATCHDOG_ERROR);      
+      }      
+    }
+  }
+}
+/*
+ * Identify the form about to be displayed and locate any help text
+ * to be displayed on that form.
+ */
+// Add the help text to the specified fields
+
+function help_popup_form_alter(&$form, &$form_state, $form_id) {
+  // Get the entity type and the bundle and search my table for any help text
+  // If there is help text then I need to locate the fields and add the text
+  // to the field.
+  // I also need to add the JQuery to allow the popup on the form.
+
+  if ($form['#id'] <> 'field-ui-field-edit-form' 
+          && !empty($form['#bundle'])) {
+    $bundle = $form['#bundle'];
+    $entity_type = $form['#entity_type'];
+    $help_items = array();
+    $help_items = _help_popup_load($bundle,$entity_type);
+    // Check to see if there are any help information to be displayed.
+    if (!empty($help_items)) {
+      // Now scan through the fields adding the help icon
+      // Add the JQuery code to manage the help icons
+      $module_path = drupal_get_path('module', 'help_popup');
+
+      $form['#attached']['css'][] = $module_path . '/css/help_popup.css';
+      $form['#attached']['js'][] = $module_path . '/js/help_popup.js';
+
+       // Need to get the help image from the DB or module directory.
+      $help_img = '&nbsp;<img height="16" width="16" src="/'.$module_path.'/images/help_16.png" alt="help">';
+     
+      $form['help_popup_entity_type'] = array (
+        '#type' => 'hidden',
+        '#value' => $entity_type,
+      );
+      $form['help_popup_bundle'] = array (
+        '#type' => 'hidden',
+        '#value' => $bundle,
+      );      
+      
+      foreach($help_items as $value ) {
+        $field_name = $value->field_name;
+        $help = '&nbsp;<a href="#" entity-type="'.$entity_type.'" bundle="'.$bundle.'" field-name="'.$field_name.'" data-reveal-id="'.$field_name.'_help_popup">'.$help_img.'</a>';
+        $form['help_popup_' . $value->field_name] = array(
+            '#type' => 'hidden',
+            '#value' => $value->help_popup_value,
+            '#attributes' => array('class' => array('hp')),
+        );
+        // Need to be careful as to the different types of fields as the title
+        // is positioned in a different location.
+        
+        if (!empty($form[$field_name][LANGUAGE_NONE][0]['#title']))
+          $form[$field_name][LANGUAGE_NONE][0]['#title'] = $form[$field_name][LANGUAGE_NONE][0]['#title'].$help;
+        if (!empty($form[$field_name][LANGUAGE_NONE]['#title']))
+          $form[$field_name][LANGUAGE_NONE]['#title'] = $form[$field_name][LANGUAGE_NONE]['#title'].$help;        
+        if (!empty($form[$field_name][LANGUAGE_NONE][0]['value']['#title']))
+          $form[$field_name][LANGUAGE_NONE][0]['value']['#title'] = $form[$field_name][LANGUAGE_NONE][0]['value']['#title'].$help;
+        
+      }
+
+      dpm($form);
+      $popup =  '<div id="toPopup"> 
+    	
+        <div class="close"></div>
+       	<span class="ecs_tooltip">Press Esc to close <span class="arrow"></span></span>
+		<div id="popup_content"> <!--your content start-->
+            <p>
+            </p>
+            <p align="center"><a href="#" class="livebox">Click Here Trigger</a></p>
+        </div> <!--your content end-->
+    
+    </div> <!--toPopup end-->
+    
+	<div class="loader"></div>
+   	<div id="backgroundPopup"></div>';
+      $form['popup'] = array(
+        '#markup' => $popup , //'<div id="help_popup">This should be hidden by JQuery</div>',
+        '#weight' => 100,
+      );
+
+
+    }
+  }
+}
+
+/*
+ * Load up all the help items for the specified entity and bundle
+ * Return array of field names and help text
+ */
+function _help_popup_load($bundle,$entity_type,$field_name = NULL) {
+  $query = db_select('help_popup', 'h');
+  $query->condition('h.bundle',$bundle,'=');
+  $query->condition('h.entity_type',$entity_type,'=');
+  $query->fields('h',array('field_name'));
+  
+  $query->fields('h',array('help_popup_value','format'));
+  if ($field_name != NULL) {
+    $query->condition('h.field_name',$field_name,'=');
+       
+  }
+  // we don't need to get the help text at present as I plan to get it using 
+  // AJAX.
+//  $query->fields('h',array('field_name','help_popup_value'));
+  
+  $result = $query->execute();
+  
+  $help_items = array();
+
+  foreach($result as $row) {
+
+    $help_items[] = $row;
+  }
+
+  return $help_items;
+}
+
+/*
+ * Check to see if the help already exists
+ * Return TRUE if it does exists
+ * Return array of field names and help text
+ */
+function _help_popup_item_exists($bundle,$entity_type,$field_name) {
+  $query = db_select('help_popup', 'h');
+  $query->condition('h.bundle',$bundle,'=');
+  $query->condition('h.entity_type',$entity_type,'=');
+  $query->condition('h.field_name',$field_name,'=');
+  $query->fields('h',array('field_name'));
+  
+  $result = $query->execute();
+  
+  $item_found = FALSE;
+  foreach($result as $row) {
+    $item_found = TRUE;
+  }
+  
+  return $item_found;
+}
+
+
+
+/*
+ * Remember to hook into the deletion of a field so we can remove the help item 
+ * from the database.
+ */ 
